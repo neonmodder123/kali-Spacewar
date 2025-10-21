@@ -1,0 +1,17 @@
+name: Build Image
+
+on:
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install Dependencies
+        run: echo placeholder
+
+      - name: Build!
+        run: |
+          echo Add other actions to build,
+          echo test, and deploy your project.
