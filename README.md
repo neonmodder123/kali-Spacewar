@@ -18,6 +18,11 @@ twitter/git: shubhamvis98
 A huge thanks to Mobian Project and Megi's Kernel Patches.
 
 ## Build Instruction:
+Automatic Build:
+
+Just fork this repository and run the Build Image action.
+
+Manual Build:
 
 Normal Build with default username and password:
 ```
