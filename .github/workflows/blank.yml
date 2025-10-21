@@ -9,9 +9,10 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - name: Install Dependencies
-        run: echo placeholder
+        run: |
+           sudo apt update
+           sudo apt install android-sdk-libsparse-utils bmap-tools debootstrap qemu-user-static rsync systemd-container
 
       - name: Build!
         run: |
-          echo Add other actions to build,
-          echo test, and deploy your project.
+          sudo ./build.sh -t nothingphone1
