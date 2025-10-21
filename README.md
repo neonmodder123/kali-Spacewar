@@ -18,9 +18,14 @@ twitter/git: shubhamvis98
 A huge thanks to Mobian Project and Megi's Kernel Patches.
 
 ## Build Instruction:
+
+Normal Build with default username and password:
 ```
-#Nothing Phone 1:
 sudo ./build.sh -t nothingphone1
+```
+If you want to specify the username, password, and hostname, run this:
+```
+sudo ./build.sh -t nothingphone1 -u USER -h HOSTNAME -p PASSWORD
 ```
 
 ## Required packages:
@@ -30,7 +35,3 @@ sudo ./build.sh -t nothingphone1
     - qemu-user-static
     - rsync
     - systemd-container
-
-
-
-![](https://img.shields.io/github/downloads/Shubhamvis98/kali-pinephone/total?label=Downloads&style=plastic)
