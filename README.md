@@ -1,4 +1,4 @@
-# Kali Phosh for PinePhone and Qcom Phones
+# Kali Phosh Builder for Nothing Phone (1) Spacewar
 
 ```
 -----------------------------------------
@@ -19,14 +19,8 @@ A huge thanks to Mobian Project and Megi's Kernel Patches.
 
 ## Build Instruction:
 ```
-#PinePhone
-./build.sh -t pinephone
-
-#PinePhone Pro
-./build.sh -t pinephonepro
-
-#SDM845
-./build.sh -t sdm845
+#Nothing Phone 1:
+sudo ./build.sh -t nothingphone1
 ```
 
 ## Required packages:
@@ -37,6 +31,6 @@ A huge thanks to Mobian Project and Megi's Kernel Patches.
     - rsync
     - systemd-container
 
-Download official Kali Nethunter for PinePhone and PinePhone Pro from Kali download page: https://www.kali.org/get-kali/#kali-mobile
+
 
 ![](https://img.shields.io/github/downloads/Shubhamvis98/kali-pinephone/total?label=Downloads&style=plastic)
