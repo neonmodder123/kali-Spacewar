@@ -8,75 +8,76 @@ hostname="fossfrog"
 username="kali"
 password="8888"
 mobian_suite="trixie"
-IMGSIZE=5   # GBs
+IMGSIZE=5 	# GBs
 MIRROR='http://http.kali.org/kali'
 
 while getopts "cbt:e:h:u:p:s:m:M:" opt
 do
-    case "$opt" in
-        t ) device="$OPTARG" ;;
-        e ) environment="$OPTARG" ;;
-        h ) hostname="$OPTARG" ;;
-        u ) username="$OPTARG" ;;
-        p ) password="$OPTARG" ;;
-        s ) custom_script="$OPTARG" ;;
-        m ) mobian_suite="$OPTARG" ;;
-        M ) MIRROR="$OPTARG" ;;
-        c ) compress=1 ;;
-        b ) blockmap=1 ;;
-    esac
+	case "$opt" in
+		t ) device="$OPTARG" ;;
+		e ) environment="$OPTARG" ;;
+		h ) hostname="$OPTARG" ;;
+		u ) username="$OPTARG" ;;
+		p ) password="$OPTARG" ;;
+		s ) custom_script="$OPTARG" ;;
+		m ) mobian_suite="$OPTARG" ;;
+		M ) MIRROR="$OPTARG" ;;
+		c ) compress=1 ;;
+		b ) blockmap=1 ;;
+	esac
 done
 
 case "$device" in
-  "pinephone"|"pinetab"|"sunxi" )
-    arch="arm64"
-    family="sunxi"
-    SERVICES="eg25-manager"
-    PACKAGES="megapixels"
-    ;;
-  "pinephonepro"|"pinetab2"|"rockchip" )
-    arch="arm64"
-    family="rockchip"
-    SERVICES="eg25-manager"
-    PACKAGES="megapixels megapixels-config-pinephonepro"
-    ;;
-  "pocof1"|"oneplus6"|"oneplus6t"|"sdm845"|"qcom" )
-    arch="arm64"
-    family="qcom"
-    SERVICES="qrtr-ns rmtfs pd-mapper tqftpserv qcom-modem-setup droid-juicer"
-    PACKAGES="pulseaudio yq qbootctl"
-    PARTITIONS=1
-    SPARSE=1
-    ;;
-  "nothingphone1"|"sm7325" )
-    arch="arm64"
-    family="sm7325"
-    SERVICES="qrtr-ns rmtfs pd-mapper tqftpserv qcom-modem-setup droid-juicer"
-    PACKAGES="pulseaudio yq qbootctl"
-    PARTITIONS=1
-    SPARSE=1
-    ;;
-  * )
-    echo "Unsupported device ${device}"
-    exit 1
-    ;;
+	"pinephone"|"pinetab"|"sunxi" )
+		arch="arm64"
+		family="sunxi"
+		SERVICES="eg25-manager"
+		PACKAGES="megapixels"
+		;;
+	"pinephonepro"|"pinetab2"|"rockchip" )
+		arch="arm64"
+		family="rockchip"
+		SERVICES="eg25-manager"
+		PACKAGES="megapixels megapixels-config-pinephonepro"
+		;;
+	"pocof1"|"oneplus6"|"oneplus6t"|"sdm845"|"qcom" )
+		arch="arm64"
+		family="qcom"
+		SERVICES="qrtr-ns rmtfs pd-mapper tqftpserv qcom-modem-setup droid-juicer"
+		PACKAGES="pulseaudio yq qbootctl"
+		PARTITIONS=1
+		SPARSE=1
+		;;
+	"nothingphone1"|"sm7325" )
+		arch="arm64"
+		family="sm7325"
+		SERVICES="qrtr-ns rmtfs pd-mapper tqftpserv qcom-modem-setup droid-juicer"
+		PACKAGES="pulseaudio yq qbootctl"
+		PARTITIONS=1
+		SPARSE=1
+		;;
+	* )
+		echo "Unsupported device ${device}"
+		exit 1
+		;;
 esac
 
 PACKAGES="${PACKAGES} kali-linux-core wget vim binutils rsync systemd-timesyncd systemd-repart"
 DPACKAGES="${family}-support"
 
 case "${environment}" in
-    phosh)
-        PACKAGES="${PACKAGES} phosh-phone phrog portfolio-filemanager"
-        SERVICES="${SERVICES} greetd"
-        ;;
-    plasma-mobile)
-        PACKAGES="${PACKAGES} plasma-mobile qmlkonsole"
-        SERVICES="${SERVICES} plasma-mobile"
-        ;;
-    xfce|lxde|gnome|kde)
-        PACKAGES="${PACKAGES} kali-desktop-${environment}"
-        ;;
+	phosh)
+		PACKAGES="${PACKAGES} phosh-phone phrog portfolio-filemanager"
+		SERVICES="${SERVICES} greetd"
+		;;
+	plasma-mobile)
+		PACKAGES="${PACKAGES} plasma-mobile qmlkonsole"
+		SERVICES="${SERVICES} plasma-mobile"
+		;;
+	xfce|lxde|gnome|kde)
+		PACKAGES="${PACKAGES} kali-desktop-${environment}"
+		SERVICES="${SERVICES}" # Assuming greetd or display manager is included in kali-desktop-*
+		;;
 esac
 
 IMG="kali_${environment}_${device}_`date +%Y%m%d`.img"
@@ -104,11 +105,28 @@ echo '[+]Stage 1: Debootstrap'
 
 echo '[+]Stage 2: Debootstrap second stage and adding Mobian apt repo'
 [ -e ${ROOTFS}/etc/passwd ] && echo '[*]Second Stage already done' || nspawn-exec /debootstrap/debootstrap --second-stage
-mkdir -p ${ROOTFS}/etc/apt/sources.list.d ${ROOTFS}/etc/apt/trusted.gpg.d
+
+# --- FIX START ---
+# Modern APT requires keyrings to be in /usr/share/keyrings and referenced via 'signed-by'.
+# The old method of placing .gpg files in trusted.gpg.d is deprecated and fails validation.
+mkdir -p ${ROOTFS}/etc/apt/sources.list.d ${ROOTFS}/usr/share/keyrings
+
+KEYRING_PATH="/usr/share/keyrings/mobian-archive-keyring.gpg"
+
+# 1. Download the GPG key, pipe it through gpg --dearmor to convert it to the required keyring format, and save it.
+# We use 'install -D' for atomic creation and to ensure correct permissions (644).
+install -D -m 644 <(curl -fsSL http://repo.mobian.org/mobian.gpg | gpg --dearmor) ${ROOTFS}${KEYRING_PATH}
+
+# 2. Update the main Kali sources list (assuming it exists and needs non-free components)
 sed -i 's/main/main contrib non-free non-free-firmware/g' ${ROOTFS}/etc/apt/sources.list
-echo "deb http://repo.mobian.org/ ${mobian_suite} main non-free-firmware" > ${ROOTFS}/etc/apt/sources.list.d/mobian.list
-curl -L http://repo.mobian.org/mobian.gpg -o ${ROOTFS}/etc/apt/trusted.gpg.d/mobian.gpg
-chmod 644 ${ROOTFS}/etc/apt/trusted.gpg.d/mobian.gpg
+
+# 3. Create the Mobian sources list, using the 'signed-by' attribute pointing to the new key location.
+echo "deb [signed-by=${KEYRING_PATH}] http://repo.mobian.org/ ${mobian_suite} main non-free-firmware" > ${ROOTFS}/etc/apt/sources.list.d/mobian.list
+
+# Remove the old, failing trusted.gpg.d folder creation if it was still here (it was in the old script)
+# The file trusted.gpg.d/mobian.gpg is no longer needed/created.
+# --- FIX END ---
+
 
 cat << EOF > ${ROOTFS}/etc/apt/preferences.d/00-mobian-priority
 Package: *
@@ -121,7 +139,7 @@ BOOT_UUID=`python3 -c 'from uuid import uuid4; print(uuid4())'`
 
 if [[ "$family" == "sunxi" || "$family" == "rockchip" ]]
 then
-    BOOTPART="UUID=${BOOT_UUID}	/boot	ext4	defaults,x-systemd.growfs	0	2"
+	BOOTPART="UUID=${BOOT_UUID}	/boot	ext4	defaults,x-systemd.growfs	0	2"
 fi
 
 cat << EOF > partuuid
@@ -130,7 +148,7 @@ BOOT_UUID=${BOOT_UUID}
 EOF
 
 cat << EOF > ${ROOTFS}/etc/fstab
-# <file system> <mount point>   <type>  <options>       <dump>  <pass>
+# <file system> <mount point> 	<type> 	<options> 	 	<dump> 	<pass>
 UUID=${ROOT_UUID}	/	ext4	defaults,x-systemd.growfs	0	1
 ${BOOTPART}
 EOF
@@ -145,33 +163,33 @@ nspawn-exec apt install -y ${DPACKAGES}
 echo '[+]Stage 4: Adding some extra tweaks'
 if [ ! -e "${ROOTFS}/etc/repart.d/50-root.conf" ]
 then
-    mkdir -p ${ROOTFS}/etc/kali-motd
-    touch ${ROOTFS}/etc/kali-motd/disable-minimal-warning
-    mkdir -p ${ROOTFS}/etc/skel/.local/share/squeekboard/keyboards/terminal
-    curl https://raw.githubusercontent.com/Shubhamvis98/PinePhone_Tweaks/main/layouts/us.yaml > ${ROOTFS}/etc/skel/.local/share/squeekboard/keyboards/us.yaml
-    ln -srf ${ROOTFS}/etc/skel/.local/share/squeekboard/keyboards/{us.yaml,terminal/}
-    sed -i 's/-0.07/0/;s/-0.13/0/' ${ROOTFS}/usr/share/plymouth/themes/kali/kali.script
-    mkdir -p ${ROOTFS}/etc/repart.d
-    cat << 'EOF' > ${ROOTFS}/etc/repart.d/50-root.conf
+	mkdir -p ${ROOTFS}/etc/kali-motd
+	touch ${ROOTFS}/etc/kali-motd/disable-minimal-warning
+	mkdir -p ${ROOTFS}/etc/skel/.local/share/squeekboard/keyboards/terminal
+	curl https://raw.githubusercontent.com/Shubhamvis98/PinePhone_Tweaks/main/layouts/us.yaml > ${ROOTFS}/etc/skel/.local/share/squeekboard/keyboards/us.yaml
+	ln -srf ${ROOTFS}/etc/skel/.local/share/squeekboard/keyboards/{us.yaml,terminal/}
+	sed -i 's/-0.07/0/;s/-0.13/0/' ${ROOTFS}/usr/share/plymouth/themes/kali/kali.script
+	mkdir -p ${ROOTFS}/etc/repart.d
+	cat << 'EOF' > ${ROOTFS}/etc/repart.d/50-root.conf
 [Partition]
 Type=root
 Weight=1000
 EOF
 else
-    echo '[*]This has been already done'
+	echo '[*]This has been already done'
 fi
 
 echo '[+]Stage 5: Adding user and changing default shell to zsh'
 if [ ! `grep ${username} ${ROOTFS}/etc/passwd` ]
 then
-    nspawn-exec adduser --disabled-password --gecos "" ${username}
-    sed -i "s#${username}:\!:#${username}:`echo ${password} | openssl passwd -1 -stdin`:#" ${ROOTFS}/etc/shadow
-    sed -i 's/bash/zsh/' ${ROOTFS}/etc/passwd
-    for i in dialout sudo audio video plugdev input render bluetooth feedbackd netdev; do
-        nspawn-exec usermod -aG ${i} ${username} || true
-    done
+	nspawn-exec adduser --disabled-password --gecos "" ${username}
+	sed -i "s#${username}:\!:#${username}:`echo ${password} | openssl passwd -1 -stdin`:#" ${ROOTFS}/etc/shadow
+	sed -i 's/bash/zsh/' ${ROOTFS}/etc/passwd
+	for i in dialout sudo audio video plugdev input render bluetooth feedbackd netdev; do
+		nspawn-exec usermod -aG ${i} ${username} || true
+	done
 else
-    echo '[*]User already present'
+	echo '[*]User already present'
 fi
 
 echo '[*]Enabling kali plymouth theme'
@@ -189,10 +207,10 @@ done
 echo '[*]Checking for custom script'
 if [ -f "${custom_script}" ]
 then
-    mkdir -p ${ROOTFS}/ztmpz
-    cp ${custom_script} ${ROOTFS}/ztmpz
-    nspawn-exec bash /ztmpz/${custom_script}
-    [ -d "${ROOTFS}/ztmpz" ] && rm -rf ${ROOTFS}/ztmpz
+	mkdir -p ${ROOTFS}/ztmpz
+	cp ${custom_script} ${ROOTFS}/ztmpz
+	nspawn-exec bash /ztmpz/${custom_script}
+	[ -d "${ROOTFS}/ztmpz" ] && rm -rf ${ROOTFS}/ztmpz
 fi
 
 echo '[*]Tweaks and cleanup'
@@ -203,14 +221,14 @@ nspawn-exec apt clean
 
 if [ ${SPARSE} ]
 then
-    #nspawn-exec sudo -u ${username} systemctl --user disable pipewire pipewire-pulse
-    #nspawn-exec sudo -u ${username} systemctl --user mask pipewire pipewire-pulse
-    #nspawn-exec sudo -u ${username} systemctl --user enable pulseaudio
-    cp -r bin/bootloader.sh bin/configs ${ROOTFS}
-    chmod +x ${ROOTFS}/bootloader.sh
-    nspawn-exec /bootloader.sh ${family}
-    mv -v ${ROOTFS}/boot*img .
-    rm -rf ${ROOTFS}/bootloader.sh ${ROOTFS}/configs
+	#nspawn-exec sudo -u ${username} systemctl --user disable pipewire pipewire-pulse
+	#nspawn-exec sudo -u ${username} systemctl --user mask pipewire pipewire-pulse
+	#nspawn-exec sudo -u ${username} systemctl --user enable pulseaudio
+	cp -r bin/bootloader.sh bin/configs ${ROOTFS}
+	chmod +x ${ROOTFS}/bootloader.sh
+	nspawn-exec /bootloader.sh ${family}
+	mv -v ${ROOTFS}/boot*img .
+	rm -rf ${ROOTFS}/bootloader.sh ${ROOTFS}/configs
 fi
 
 echo '[*]Deploy rootfs into EXT4 image'
@@ -220,8 +238,8 @@ tar -xpf ${ROOTFS_TAR}
 
 if [[ "$family" == "sunxi" || "$family" == "rockchip" ]]
 then
-    echo '[*]Update u-boot config...'
-    nspawn-exec -r '/etc/kernel/postinst.d/zz-u-boot-menu $(linux-version list | tail -1)'
+	echo '[*]Update u-boot config...'
+	nspawn-exec -r '/etc/kernel/postinst.d/zz-u-boot-menu $(linux-version list | tail -1)'
 fi
 
 echo '[*]Cleanup and unmount'
@@ -230,22 +248,21 @@ cleanup
 echo "[+]Stage 7: Compressing ${IMG}..."
 if [ "$blockmap" ]
 then
-    bmaptool create ${IMG} > ${IMG}.bmap
+	bmaptool create ${IMG} > ${IMG}.bmap
 else
-    echo '[*]Skipped blockmap creation'
+	echo '[*]Skipped blockmap creation'
 fi
 
 if [ "$SPARSE" ]
 then
-    img2simg ${IMG} ${IMG}_SPARSE
-    mv -v ${IMG}_SPARSE ${IMG}
+	img2simg ${IMG} ${IMG}_SPARSE
+	mv -v ${IMG}_SPARSE ${IMG}
 fi
 
 if [ "$compress" ]
 then
-    [ -f "${IMG}" ] && xz "${IMG}"
+	[ -f "${IMG}" ] && xz "${IMG}"
 else
-    echo '[*]Skipped compression'
+	echo '[*]Skipped compression'
 fi
 echo '[+]Image Generated.'
-
