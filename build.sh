@@ -1,7 +1,14 @@
 #!/bin/bash -e
 
+# This script builds a Kali image for various mobile devices, integrating 
+# the Mobian repository for mobile-specific packages.
+# The GPG key handling for the Mobian repository has been updated to use 
+# the modern, secure 'signed-by' APT directive, with the key installation 
+# performed robustly inside the chroot environment.
+
 . bin/funcs.sh
 
+# Default Configuration
 device="pinephone"
 environment="phosh"
 hostname="fossfrog"
@@ -11,6 +18,7 @@ mobian_suite="trixie"
 IMGSIZE=5 	# GBs
 MIRROR='http://http.kali.org/kali'
 
+# Parse command line options
 while getopts "cbt:e:h:u:p:s:m:M:" opt
 do
 	case "$opt" in
@@ -27,6 +35,7 @@ do
 	esac
 done
 
+# Device-specific configuration
 case "$device" in
 	"pinephone"|"pinetab"|"sunxi" )
 		arch="arm64"
@@ -62,9 +71,11 @@ case "$device" in
 		;;
 esac
 
+# Common packages
 PACKAGES="${PACKAGES} kali-linux-core wget vim binutils rsync systemd-timesyncd systemd-repart"
 DPACKAGES="${family}-support"
 
+# Environment-specific packages
 case "${environment}" in
 	phosh)
 		PACKAGES="${PACKAGES} phosh-phone phrog portfolio-filemanager"
@@ -104,28 +115,34 @@ echo '[+]Stage 1: Debootstrap'
 [ -e ${ROOTFS}/etc ] && echo -e "[*]Debootstrap already done.\nSkipping Debootstrap..." || debootstrap --foreign --arch $arch kali-rolling ${ROOTFS} ${MIRROR}
 
 echo '[+]Stage 2: Debootstrap second stage and adding Mobian apt repo'
-[ -e ${ROOTFS}/etc/passwd ] && echo '[*]Second Stage already done' || nspawn-exec /debootstrap/debootstrap --second-stage
+if [ -e ${ROOTFS}/etc/passwd ]; then
+    echo '[*]Second Stage already done'
+else
+    nspawn-exec /debootstrap/debootstrap --second-stage
+fi
 
-# --- FIX START ---
-# Modern APT requires keyrings to be in /usr/share/keyrings and referenced via 'signed-by'.
-# The old method of placing .gpg files in trusted.gpg.d is deprecated and fails validation.
+# --- ROBUST APT KEY AND SOURCE SETUP (FIX) ---
+# Create the necessary directories for modern APT keyring handling
 mkdir -p ${ROOTFS}/etc/apt/sources.list.d ${ROOTFS}/usr/share/keyrings
 
 KEYRING_PATH="/usr/share/keyrings/mobian-archive-keyring.gpg"
 
-# 1. Download the GPG key, pipe it through gpg --dearmor to convert it to the required keyring format, and save it.
-# We use 'install -D' for atomic creation and to ensure correct permissions (644).
-install -D -m 644 <(curl -fsSL http://repo.mobian.org/mobian.gpg | gpg --dearmor) ${ROOTFS}${KEYRING_PATH}
-
-# 2. Update the main Kali sources list (assuming it exists and needs non-free components)
+# 1. Update the main Kali sources list to ensure non-free components are enabled
 sed -i 's/main/main contrib non-free non-free-firmware/g' ${ROOTFS}/etc/apt/sources.list
 
-# 3. Create the Mobian sources list, using the 'signed-by' attribute pointing to the new key location.
+# 2. Create the Mobian sources list, using the modern 'signed-by' attribute
 echo "deb [signed-by=${KEYRING_PATH}] http://repo.mobian.org/ ${mobian_suite} main non-free-firmware" > ${ROOTFS}/etc/apt/sources.list.d/mobian.list
 
-# Remove the old, failing trusted.gpg.d folder creation if it was still here (it was in the old script)
-# The file trusted.gpg.d/mobian.gpg is no longer needed/created.
-# --- FIX END ---
+# 3. Temporarily install required tools (curl, gnupg) inside the chroot
+echo "[*] Installing curl and gnupg inside the chroot temporarily to fetch Mobian GPG key..."
+nspawn-exec apt update # Run an update with just Kali sources
+nspawn-exec apt install -y curl gnupg
+
+# 4. Fetch and install the Mobian GPG key *inside* the container
+echo "[*] Fetching and installing Mobian GPG key to ${KEYRING_PATH}."
+# Executing this inside the container ensures that 'gpg --dearmor' runs in the correct environment
+nspawn-exec sh -c "curl -fsSL http://repo.mobian.org/mobian.gpg | gpg --dearmor -o ${KEYRING_PATH}"
+# --- END ROBUST APT KEY AND SOURCE SETUP (FIX) ---
 
 
 cat << EOF > ${ROOTFS}/etc/apt/preferences.d/00-mobian-priority
@@ -154,11 +171,12 @@ ${BOOTPART}
 EOF
 
 echo '[+]Stage 3: Installing device specific and environment packages'
-nspawn-exec apt update
-nspawn-exec apt install -y curl
-nspawn-exec sh -c "$(curl -fsSL https://repo.fossfrog.in/setup.sh)"
+# This 'apt update' should now succeed because the Mobian key has been installed
+nspawn-exec apt update 
 nspawn-exec apt install -y ${PACKAGES}
 nspawn-exec apt install -y ${DPACKAGES}
+# Uninstall temporary tools after use
+nspawn-exec apt autoremove --purge -y curl gnupg
 
 echo '[+]Stage 4: Adding some extra tweaks'
 if [ ! -e "${ROOTFS}/etc/repart.d/50-root.conf" ]
