@@ -36,3 +36,10 @@ jobs:
       - name: Build!
         run: |
           sudo ./build.sh -t nothingphone1
+
+      - name: ⬆️ Upload Nethunter Image Artifact
+        uses: actions/upload-artifact@v4
+        with:
+          path: 'kali_phosh_nothingphone1_*.img'
+          name: 'nothingphone1-nethunter-image'
+          retention-days: 7
