@@ -15,24 +15,24 @@ jobs:
           
       - name: Install Dependencies and Mobian GPG Key
         run: |
-          # 1. Update and install basic dependency tools, including gnupg for key management
           sudo apt update
           sudo apt install -y android-sdk-libsparse-utils bmap-tools debootstrap qemu-user-static rsync systemd-container gnupg dirmngr
-
-          # 2. Add the Mobian Repository GPG Key (ID: 970B1DD5FF63506F85001159951D61F2BC232697)
+          
           echo "Adding Mobian GPG key..."
-          
-          # Fetch the key from a public keyserver using the shorter key ID
           gpg --keyserver hkps://keyserver.ubuntu.com --recv-keys 951D61F2BC232697 || { echo "Failed to fetch key from keyserver. Proceeding to next step (optional)."; }
-          
-          # Export and de-armor the key, then place it in the trusted APT directory
-          # Note: We use the specific key ID to ensure we only export the required key.
           gpg --export 951D61F2BC232697 | sudo gpg --dearmor -o /etc/apt/trusted.gpg.d/mobian-archive-keyring.gpg
           
-          # 3. Final apt update to confirm the new repository is now trusted
-          echo "Running final apt update to verify..."
           sudo apt update
-          
+
+      - name: Cache Nethunter Base Image (base.tgz)
+        id: cache-base
+        uses: actions/cache@v4
+        with:
+          path: base.tgz
+          key: ${{ runner.os }}-nethunter-base-${{ hashFiles('build.sh') }}
+          restore-keys: |
+            ${{ runner.os }}-nethunter-base-
+
       - name: Build!
         run: |
           sudo ./build.sh -t nothingphone1
