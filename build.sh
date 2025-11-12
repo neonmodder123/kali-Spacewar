@@ -9,9 +9,9 @@
 . bin/funcs.sh
 
 # Default Configuration
-device="pinephone"
+device="nothingphone1"
 environment="phosh"
-hostname="fossfrog"
+hostname="nethunter"
 username="kali"
 password="8888"
 mobian_suite="trixie"
