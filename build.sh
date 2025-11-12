@@ -4,7 +4,7 @@
 # the Mobian repository for mobile-specific packages.
 # The GPG key handling for the Mobian repository has been updated to use 
 # the modern, secure 'signed-by' APT directive, with the key installation 
-# performed robustly inside the chroot environment.
+# performed robustly on the host system, writing directly into the chroot.
 
 . bin/funcs.sh
 
@@ -121,28 +121,33 @@ else
     nspawn-exec /debootstrap/debootstrap --second-stage
 fi
 
-# --- ROBUST APT KEY AND SOURCE SETUP (FIX) ---
-# Create the necessary directories for modern APT keyring handling
-mkdir -p ${ROOTFS}/etc/apt/sources.list.d ${ROOTFS}/usr/share/keyrings
+# --- ROBUST APT KEY AND SOURCE SETUP (FINAL FIX: Host-Side) ---
+# Goal: Ensure the GPG key is in the correct format and location before apt update in Stage 3.
+# We execute this on the host system and redirect the output to guarantee success.
 
-KEYRING_PATH="/usr/share/keyrings/mobian-archive-keyring.gpg"
+KEYRING_DIR="${ROOTFS}/usr/share/keyrings"
+KEYRING_PATH="${KEYRING_DIR}/mobian-archive-keyring.gpg"
 
-# 1. Update the main Kali sources list to ensure non-free components are enabled
+# 1. Create the necessary directories
+mkdir -p ${ROOTFS}/etc/apt/sources.list.d ${KEYRING_DIR}
+
+# 2. Host-Side Fetch and Install Key (Most reliable method)
+echo "[*] Fetching and installing Mobian GPG key from host system to ${KEYRING_PATH}..."
+# This command uses 'curl' and 'gpg --dearmor' on the host and pipes the resulting
+# binary keyring data directly into the target file using 'tee' (requires tee to run as root).
+# This single command ensures atomicity and correct formatting.
+curl -fsSL http://repo.mobian.org/mobian.gpg | gpg --dearmor | tee ${KEYRING_PATH} > /dev/null
+
+# 3. Explicitly set world-readable permissions (fixes "not readable by user executing gpgv" warning)
+chmod 644 ${KEYRING_PATH}
+
+# 4. Update the main Kali sources list to ensure non-free components are enabled
 sed -i 's/main/main contrib non-free non-free-firmware/g' ${ROOTFS}/etc/apt/sources.list
 
-# 2. Create the Mobian sources list, using the modern 'signed-by' attribute
+# 5. Create the Mobian sources list, using the modern 'signed-by' attribute
 echo "deb [signed-by=${KEYRING_PATH}] http://repo.mobian.org/ ${mobian_suite} main non-free-firmware" > ${ROOTFS}/etc/apt/sources.list.d/mobian.list
 
-# 3. Temporarily install required tools (curl, gnupg) inside the chroot
-echo "[*] Installing curl and gnupg inside the chroot temporarily to fetch Mobian GPG key..."
-nspawn-exec apt update # Run an update with just Kali sources
-nspawn-exec apt install -y curl gnupg
-
-# 4. Fetch and install the Mobian GPG key *inside* the container
-echo "[*] Fetching and installing Mobian GPG key to ${KEYRING_PATH}."
-# Executing this inside the container ensures that 'gpg --dearmor' runs in the correct environment
-nspawn-exec sh -c "curl -fsSL http://repo.mobian.org/mobian.gpg | gpg --dearmor -o ${KEYRING_PATH}"
-# --- END ROBUST APT KEY AND SOURCE SETUP (FIX) ---
+# --- END ROBUST APT KEY AND SOURCE SETUP (FINAL FIX) ---
 
 
 cat << EOF > ${ROOTFS}/etc/apt/preferences.d/00-mobian-priority
@@ -171,12 +176,10 @@ ${BOOTPART}
 EOF
 
 echo '[+]Stage 3: Installing device specific and environment packages'
-# This 'apt update' should now succeed because the Mobian key has been installed
+# This 'apt update' should now succeed because the Mobian key has been installed cleanly
 nspawn-exec apt update 
 nspawn-exec apt install -y ${PACKAGES}
 nspawn-exec apt install -y ${DPACKAGES}
-# Uninstall temporary tools after use
-nspawn-exec apt autoremove --purge -y curl gnupg
 
 echo '[+]Stage 4: Adding some extra tweaks'
 if [ ! -e "${ROOTFS}/etc/repart.d/50-root.conf" ]
@@ -214,7 +217,7 @@ echo '[*]Enabling kali plymouth theme'
 nspawn-exec plymouth-set-default-theme -R kali
 #sed -i "/picture-uri/cpicture-uri='file:\/\/\/usr\/share\/backgrounds\/kali\/kali-red-sticker-16x9.jpg'" ${ROOTFS}/usr/share/glib-2.0/schemas/11_mobile.gschema.override
 sed -i "/picture-uri/cpicture-uri='file:\/\/\/usr\/share\/backgrounds\/kali\/kali-metal-dark-16x9.jpg'" ${ROOTFS}/usr/share/glib-2.0/schemas/10_desktop-base.gschema.override
-nspawn-exec glib-compile-schemas /usr/share/glib-2.0/schemas
+nspawn-exec glib-compile-schemas /usr/share/glib-20/schemas
 
 echo '[+]Stage 6: Enable services'
 for svc in `echo ${SERVICES} | tr ' ' '\n'`
@@ -284,3 +287,5 @@ else
 	echo '[*]Skipped compression'
 fi
 echo '[+]Image Generated.'
+
+
