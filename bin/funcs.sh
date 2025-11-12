@@ -1,291 +1,100 @@
-#!/bin/bash -e
+#!/bin/bash
 
-# This script builds a Kali image for various mobile devices, integrating 
-# the Mobian repository for mobile-specific packages.
-# The GPG key handling for the Mobian repository has been updated to use 
-# the modern, secure 'signed-by' APT directive, with the key installation 
-# performed robustly on the host system, writing directly into the chroot.
+ARCH='arm64'
+qemu_bin='/usr/bin/qemu-aarch64-static'
+machine='debian'
+ENV='-E RUNLEVEL=1 -E LANG=C -E DEBIAN_FRONTEND=noninteractive -E DEBCONF_NOWARNINGS=yes'
+LOOP=`losetup -f`
+BOOT_P=${LOOP}p1
+ROOT_P=${LOOP}p2
+WORK_DIR=`dirname $0`
+ROOTFS=${WORK_DIR}/kali_rootfs_tmp
 
-. bin/funcs.sh
+banner()
+{
+cat <<'EOF'
+-----------------------------------------
+ _____     _   _____         _
+|   | |___| |_|  |  |_ _ ___| |_ ___ ___
+| | | | -_|  _|     | | |   |  _| -_|  _|
+|_|___|___|_| |__|__|___|_|_|_| |___|_|
+ _____
+|  _  |___ ___
+|   __|  _| . | Image Generator
+|__|  |_| |___| by Shubham Vishwakarma
 
-# Default Configuration
-device="pinephone"
-environment="phosh"
-hostname="fossfrog"
-username="kali"
-password="8888"
-mobian_suite="trixie"
-IMGSIZE=5 	# GBs
-MIRROR='http://http.kali.org/kali'
-
-# Parse command line options
-while getopts "cbt:e:h:u:p:s:m:M:" opt
-do
-	case "$opt" in
-		t ) device="$OPTARG" ;;
-		e ) environment="$OPTARG" ;;
-		h ) hostname="$OPTARG" ;;
-		u ) username="$OPTARG" ;;
-		p ) password="$OPTARG" ;;
-		s ) custom_script="$OPTARG" ;;
-		m ) mobian_suite="$OPTARG" ;;
-		M ) MIRROR="$OPTARG" ;;
-		c ) compress=1 ;;
-		b ) blockmap=1 ;;
-	esac
-done
-
-# Device-specific configuration
-case "$device" in
-	"pinephone"|"pinetab"|"sunxi" )
-		arch="arm64"
-		family="sunxi"
-		SERVICES="eg25-manager"
-		PACKAGES="megapixels"
-		;;
-	"pinephonepro"|"pinetab2"|"rockchip" )
-		arch="arm64"
-		family="rockchip"
-		SERVICES="eg25-manager"
-		PACKAGES="megapixels megapixels-config-pinephonepro"
-		;;
-	"pocof1"|"oneplus6"|"oneplus6t"|"sdm845"|"qcom" )
-		arch="arm64"
-		family="qcom"
-		SERVICES="qrtr-ns rmtfs pd-mapper tqftpserv qcom-modem-setup droid-juicer"
-		PACKAGES="pulseaudio yq qbootctl"
-		PARTITIONS=1
-		SPARSE=1
-		;;
-	"nothingphone1"|"sm7325" )
-		arch="arm64"
-		family="sm7325"
-		SERVICES="qrtr-ns rmtfs pd-mapper tqftpserv qcom-modem-setup droid-juicer"
-		PACKAGES="pulseaudio yq qbootctl"
-		PARTITIONS=1
-		SPARSE=1
-		;;
-	* )
-		echo "Unsupported device ${device}"
-		exit 1
-		;;
-esac
-
-# Common packages
-PACKAGES="${PACKAGES} kali-linux-core wget vim binutils rsync systemd-timesyncd systemd-repart"
-DPACKAGES="${family}-support"
-
-# Environment-specific packages
-case "${environment}" in
-	phosh)
-		PACKAGES="${PACKAGES} phosh-phone phrog portfolio-filemanager"
-		SERVICES="${SERVICES} greetd"
-		;;
-	plasma-mobile)
-		PACKAGES="${PACKAGES} plasma-mobile qmlkonsole"
-		SERVICES="${SERVICES} plasma-mobile"
-		;;
-	xfce|lxde|gnome|kde)
-		PACKAGES="${PACKAGES} kali-desktop-${environment}"
-		SERVICES="${SERVICES}" # Assuming greetd or display manager is included in kali-desktop-*
-		;;
-esac
-
-IMG="kali_${environment}_${device}_`date +%Y%m%d`.img"
-ROOTFS_TAR="kali_${environment}_${device}_`date +%Y%m%d`.tgz"
-ROOTFS="kali_rootfs_tmp"
-
-### START BUILDING ###
-banner
-echo '____________________BUILD_INFO____________________'
-echo "Device: $device"
-echo "Environment: $environment"
-echo "Hostname: $hostname"
-echo "Username: $username"
-echo "Password: $password"
-echo "Mobian Suite: $mobian_suite"
-echo "Family: $family"
-echo "Custom Script: $custom_script"
-echo -e '--------------------------------------------------\n\n'
-echo '[*]Build will start in 5 seconds...'; sleep 5
-
-[ -e "base.tgz" ] && mkdir ${ROOTFS} && tar --strip-components=1 -xpf base.tgz -C ${ROOTFS}
-
-echo '[+]Stage 1: Debootstrap'
-[ -e ${ROOTFS}/etc ] && echo -e "[*]Debootstrap already done.\nSkipping Debootstrap..." || debootstrap --foreign --arch $arch kali-rolling ${ROOTFS} ${MIRROR}
-
-echo '[+]Stage 2: Debootstrap second stage and adding Mobian apt repo'
-if [ -e ${ROOTFS}/etc/passwd ]; then
-    echo '[*]Second Stage already done'
-else
-    nspawn-exec /debootstrap/debootstrap --second-stage
-fi
-
-# --- ROBUST APT KEY AND SOURCE SETUP (FINAL FIX: Host-Side) ---
-# Goal: Ensure the GPG key is in the correct format and location before apt update in Stage 3.
-# We execute this on the host system and redirect the output to guarantee success.
-
-KEYRING_DIR="${ROOTFS}/usr/share/keyrings"
-KEYRING_PATH="${KEYRING_DIR}/mobian-archive-keyring.gpg"
-
-# 1. Create the necessary directories
-mkdir -p ${ROOTFS}/etc/apt/sources.list.d ${KEYRING_DIR}
-
-# 2. Host-Side Fetch and Install Key (Most reliable method)
-echo "[*] Fetching and installing Mobian GPG key from host system to ${KEYRING_PATH}..."
-# This command uses 'curl' and 'gpg --dearmor' on the host and pipes the resulting
-# binary keyring data directly into the target file using 'tee' (requires tee to run as root).
-# This single command ensures atomicity and correct formatting.
-curl -fsSL http://repo.mobian.org/mobian.gpg | gpg --dearmor | tee ${KEYRING_PATH} > /dev/null
-
-# 3. Explicitly set world-readable permissions (fixes "not readable by user executing gpgv" warning)
-chmod 644 ${KEYRING_PATH}
-
-# 4. Update the main Kali sources list to ensure non-free components are enabled
-sed -i 's/main/main contrib non-free non-free-firmware/g' ${ROOTFS}/etc/apt/sources.list
-
-# 5. Create the Mobian sources list, using the modern 'signed-by' attribute
-echo "deb [signed-by=${KEYRING_PATH}] http://repo.mobian.org/ ${mobian_suite} main non-free-firmware" > ${ROOTFS}/etc/apt/sources.list.d/mobian.list
-
-# --- END ROBUST APT KEY AND SOURCE SETUP (FINAL FIX) ---
-
-
-cat << EOF > ${ROOTFS}/etc/apt/preferences.d/00-mobian-priority
-Package: *
-Pin: release o=Mobian
-Pin-Priority: 700
+twitter/git: shubhamvis98
+-----------------------------------------
 EOF
+}
 
-ROOT_UUID=`python3 -c 'from uuid import uuid4; print(uuid4())'`
-BOOT_UUID=`python3 -c 'from uuid import uuid4; print(uuid4())'`
+nspawn-exec() {
+    case "$1" in
+        '-r')
+            echo "$2" > ${ROOTFS}/__tmp.sh
+            nspawn-exec bash /__tmp.sh
+            rm ${ROOTFS}/__tmp.sh
+            ;;
+        *)
+            systemd-nspawn --bind-ro $qemu_bin -M $machine --capability=cap_setfcap $ENV -D ${ROOTFS} "$@"
+            ;;
+    esac
+}
 
-if [[ "$family" == "sunxi" || "$family" == "rockchip" ]]
-then
-	BOOTPART="UUID=${BOOT_UUID}	/boot	ext4	defaults,x-systemd.growfs	0	2"
-fi
+mkimg() {
+    set -e
+    [[ -z $2 || $2 -lt 3 ]] && echo -e "Usage:\n\tmkimg {filename} {size_in_GB}\n\nNote: Size must be more than 3GB" && return
+    IMG=$1
+    SIZE=$2
+    PARTS=$3
+    [ -e ${IMG} ] && echo -e '[*]$IMG already exists. So, skipping mkimg' && return
 
-cat << EOF > partuuid
-ROOT_UUID=${ROOT_UUID}
-BOOT_UUID=${BOOT_UUID}
+    echo "[*]Creating blank Image: ${IMG} of size ${SIZE}GB..."
+    dd if=/dev/zero of=${IMG} bs=1M count=$((1024*$SIZE)) status=progress
+
+    source ./partuuid
+
+    if [ $PARTS -eq 1 ]
+    then
+        losetup ${LOOP} ${IMG}
+        mkfs.ext4 -L ROOT -U ${ROOT_UUID} ${LOOP}
+        mkdir -pv ${ROOTFS}
+        mount -v ${LOOP} ${ROOTFS}
+    else
+        echo '[*]Partitioning Image: 512MB BOOT and rest ROOTFS...'
+        sleep 1
+        cat << 'EOF' | sfdisk ${IMG}
+        label: gpt
+        device: test.img
+        unit: sectors
+        first-lba: 2048
+        sector-size: 512
+        1 : start=2048, size=1048576, type=C12A7328-F81F-11D2-BA4B-00A0C93EC93B
+        2 : start=1050624, type=B921B045-1DF0-41C3-AF44-4C6F280D3FAE
 EOF
+        echo '[*]Formatting Partitions...'
+        losetup ${LOOP} -P ${IMG}
+        [ -e ${BOOT_P} ] && mkfs.ext4 -L BOOT -U ${BOOT_UUID} ${BOOT_P}
+        [ -e ${ROOT_P} ] && mkfs.ext4 -L ROOT -U ${ROOT_UUID} ${ROOT_P}
 
-cat << EOF > ${ROOTFS}/etc/fstab
-# <file system> <mount point> 	<type> 	<options> 	 	<dump> 	<pass>
-UUID=${ROOT_UUID}	/	ext4	defaults,x-systemd.growfs	0	1
-${BOOTPART}
-EOF
+        echo '[*]Mounting Partitions...'
+        mkdir -pv ${ROOTFS}
+        mount -v ${ROOT_P} ${ROOTFS}
+        mkdir -pv ${ROOTFS}/boot
+        mount -v ${BOOT_P} ${ROOTFS}/boot
+    fi
+}
 
-echo '[+]Stage 3: Installing device specific and environment packages'
-# This 'apt update' should now succeed because the Mobian key has been installed cleanly
-nspawn-exec apt update 
-nspawn-exec apt install -y ${PACKAGES}
-nspawn-exec apt install -y ${DPACKAGES}
+cleanup() {
+    set -x
+    echo '[*]Unounting Partitions...'
+    mountpoint -q ${ROOTFS}/boot && umount ${ROOTFS}/boot
+    mountpoint -q ${ROOTFS} && umount ${ROOTFS}
+    rm -rf ${ROOTFS} ./partuuid
+    losetup -d ${LOOP}
+}
 
-echo '[+]Stage 4: Adding some extra tweaks'
-if [ ! -e "${ROOTFS}/etc/repart.d/50-root.conf" ]
-then
-	mkdir -p ${ROOTFS}/etc/kali-motd
-	touch ${ROOTFS}/etc/kali-motd/disable-minimal-warning
-	mkdir -p ${ROOTFS}/etc/skel/.local/share/squeekboard/keyboards/terminal
-	curl https://raw.githubusercontent.com/Shubhamvis98/PinePhone_Tweaks/main/layouts/us.yaml > ${ROOTFS}/etc/skel/.local/share/squeekboard/keyboards/us.yaml
-	ln -srf ${ROOTFS}/etc/skel/.local/share/squeekboard/keyboards/{us.yaml,terminal/}
-	sed -i 's/-0.07/0/;s/-0.13/0/' ${ROOTFS}/usr/share/plymouth/themes/kali/kali.script
-	mkdir -p ${ROOTFS}/etc/repart.d
-	cat << 'EOF' > ${ROOTFS}/etc/repart.d/50-root.conf
-[Partition]
-Type=root
-Weight=1000
-EOF
-else
-	echo '[*]This has been already done'
-fi
-
-echo '[+]Stage 5: Adding user and changing default shell to zsh'
-if [ ! `grep ${username} ${ROOTFS}/etc/passwd` ]
-then
-	nspawn-exec adduser --disabled-password --gecos "" ${username}
-	sed -i "s#${username}:\!:#${username}:`echo ${password} | openssl passwd -1 -stdin`:#" ${ROOTFS}/etc/shadow
-	sed -i 's/bash/zsh/' ${ROOTFS}/etc/passwd
-	for i in dialout sudo audio video plugdev input render bluetooth feedbackd netdev; do
-		nspawn-exec usermod -aG ${i} ${username} || true
-	done
-else
-	echo '[*]User already present'
-fi
-
-echo '[*]Enabling kali plymouth theme'
-nspawn-exec plymouth-set-default-theme -R kali
-#sed -i "/picture-uri/cpicture-uri='file:\/\/\/usr\/share\/backgrounds\/kali\/kali-red-sticker-16x9.jpg'" ${ROOTFS}/usr/share/glib-2.0/schemas/11_mobile.gschema.override
-sed -i "/picture-uri/cpicture-uri='file:\/\/\/usr\/share\/backgrounds\/kali\/kali-metal-dark-16x9.jpg'" ${ROOTFS}/usr/share/glib-2.0/schemas/10_desktop-base.gschema.override
-nspawn-exec glib-compile-schemas /usr/share/glib-20/schemas
-
-echo '[+]Stage 6: Enable services'
-for svc in `echo ${SERVICES} | tr ' ' '\n'`
-do
-	nspawn-exec systemctl enable $svc
-done
-
-echo '[*]Checking for custom script'
-if [ -f "${custom_script}" ]
-then
-	mkdir -p ${ROOTFS}/ztmpz
-	cp ${custom_script} ${ROOTFS}/ztmpz
-	nspawn-exec bash /ztmpz/${custom_script}
-	[ -d "${ROOTFS}/ztmpz" ] && rm -rf ${ROOTFS}/ztmpz
-fi
-
-echo '[*]Tweaks and cleanup'
-echo ${hostname} > ${ROOTFS}/etc/hostname
-grep -q ${hostname} ${ROOTFS}/etc/hosts || \
-	sed -i "1s/$/\n127.0.1.1\t${hostname}/" ${ROOTFS}/etc/hosts
-nspawn-exec apt clean
-
-if [ ${SPARSE} ]
-then
-	#nspawn-exec sudo -u ${username} systemctl --user disable pipewire pipewire-pulse
-	#nspawn-exec sudo -u ${username} systemctl --user mask pipewire pipewire-pulse
-	#nspawn-exec sudo -u ${username} systemctl --user enable pulseaudio
-	cp -r bin/bootloader.sh bin/configs ${ROOTFS}
-	chmod +x ${ROOTFS}/bootloader.sh
-	nspawn-exec /bootloader.sh ${family}
-	mv -v ${ROOTFS}/boot*img .
-	rm -rf ${ROOTFS}/bootloader.sh ${ROOTFS}/configs
-fi
-
-echo '[*]Deploy rootfs into EXT4 image'
-tar -cpzf ${ROOTFS_TAR} ${ROOTFS} && rm -rf ${ROOTFS}
-mkimg ${IMG} ${IMGSIZE} ${PARTITIONS}
-tar -xpf ${ROOTFS_TAR}
-
-if [[ "$family" == "sunxi" || "$family" == "rockchip" ]]
-then
-	echo '[*]Update u-boot config...'
-	nspawn-exec -r '/etc/kernel/postinst.d/zz-u-boot-menu $(linux-version list | tail -1)'
-fi
-
-echo '[*]Cleanup and unmount'
-cleanup
-
-echo "[+]Stage 7: Compressing ${IMG}..."
-if [ "$blockmap" ]
-then
-	bmaptool create ${IMG} > ${IMG}.bmap
-else
-	echo '[*]Skipped blockmap creation'
-fi
-
-if [ "$SPARSE" ]
-then
-	img2simg ${IMG} ${IMG}_SPARSE
-	mv -v ${IMG}_SPARSE ${IMG}
-fi
-
-if [ "$compress" ]
-then
-	[ -f "${IMG}" ] && xz "${IMG}"
-else
-	echo '[*]Skipped compression'
-fi
-echo '[+]Image Generated.'
-
-
+trap ctrl_c INT
+ctrl_c() {
+    exit 1
+}
