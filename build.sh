@@ -9,7 +9,7 @@ username="kali"
 password="8888"
 mobian_suite="trixie"
 IMGSIZE=5
-MIRROR='http://http.kali.org/kali'
+MIRROR='http://us.mirror.ionos.com/linux/distributions/kali'
 
 while getopts "cbt:e:h:u:p:s:m:M:" opt
 do
