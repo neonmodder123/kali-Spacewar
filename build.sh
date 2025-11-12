@@ -144,6 +144,11 @@ UUID=${ROOT_UUID}	/	ext4	defaults,x-systemd.growfs	0	1
 ${BOOTPART}
 EOF
 
+if [ ! -e "base.tgz" ]; then
+    echo '[*] Creating base.tgz for caching purposes...'
+    tar -cpzf base.tgz --exclude='proc/*' --exclude='sys/*' --exclude='dev/*' --exclude='run/*' -C ${ROOTFS} .
+fi
+
 echo '[+]Stage 3: Installing device specific and environment packages'
 # This is where the error occurred before. The [trusted=yes] should resolve it now.
 nspawn-exec apt update
