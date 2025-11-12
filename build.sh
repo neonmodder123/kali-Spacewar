@@ -2,9 +2,9 @@
 
 # This script builds a Kali image for various mobile devices, integrating 
 # the Mobian repository for mobile-specific packages.
-# The GPG key handling for the Mobian repository has been updated to use 
-# the modern, secure 'signed-by' APT directive, with the key installation 
-# performed robustly on the host system, writing directly into the chroot.
+# This version includes robust, host-side GPG key installation for both 
+# the main Kali archive (to fix debootstrap warnings) and the Mobian 
+# repository (to fix the previous fatal error).
 
 . bin/funcs.sh
 
@@ -121,31 +121,33 @@ else
     nspawn-exec /debootstrap/debootstrap --second-stage
 fi
 
-# --- ROBUST APT KEY AND SOURCE SETUP (FINAL FIX: Host-Side) ---
-# Goal: Ensure the GPG key is in the correct format and location before apt update in Stage 3.
-# We execute this on the host system and redirect the output to guarantee success.
+# --- ROBUST APT KEY AND SOURCE SETUP (FINAL FIX: Host-Side for both Kali & Mobian) ---
 
 KEYRING_DIR="${ROOTFS}/usr/share/keyrings"
-KEYRING_PATH="${KEYRING_DIR}/mobian-archive-keyring.gpg"
+KALI_KEYRING_PATH="${KEYRING_DIR}/kali-archive-keyring.gpg"
+MOBIAN_KEYRING_PATH="${KEYRING_DIR}/mobian-archive-keyring.gpg"
 
-# 1. Create the necessary directories
+# 1. Create the necessary directories on the host
 mkdir -p ${ROOTFS}/etc/apt/sources.list.d ${KEYRING_DIR}
 
-# 2. Host-Side Fetch and Install Key (Most reliable method)
-echo "[*] Fetching and installing Mobian GPG key from host system to ${KEYRING_PATH}..."
-# This command uses 'curl' and 'gpg --dearmor' on the host and pipes the resulting
-# binary keyring data directly into the target file using 'tee' (requires tee to run as root).
-# This single command ensures atomicity and correct formatting.
-curl -fsSL http://repo.mobian.org/mobian.gpg | gpg --dearmor | tee ${KEYRING_PATH} > /dev/null
+# 2. Install KALI Key (Fixes the debootstrap WARNING)
+echo "[*] Installing Kali GPG key from host system to ${KALI_KEYRING_PATH}..."
+# Use curl/gpg on the host and tee the output to guarantee correct format and permissions.
+curl -fsSL https://archive.kali.org/archive-keyring.gpg | gpg --dearmor | tee ${KALI_KEYRING_PATH} > /dev/null
+chmod 644 ${KALI_KEYRING_PATH}
 
-# 3. Explicitly set world-readable permissions (fixes "not readable by user executing gpgv" warning)
-chmod 644 ${KEYRING_PATH}
+# 3. Install MOBIAN Key (Fixes the previous FATAL ERROR)
+echo "[*] Installing Mobian GPG key from host system to ${MOBIAN_KEYRING_PATH}..."
+curl -fsSL http://repo.mobian.org/mobian.gpg | gpg --dearmor | tee ${MOBIAN_KEYRING_PATH} > /dev/null
+chmod 644 ${MOBIAN_KEYRING_PATH}
 
-# 4. Update the main Kali sources list to ensure non-free components are enabled
+# 4. Update the main Kali sources line to include contrib/non-free and the signed-by directive
+# This ensures the first source line is correctly formatted for modern APT
 sed -i 's/main/main contrib non-free non-free-firmware/g' ${ROOTFS}/etc/apt/sources.list
+sed -i 's|^deb \(.*\)kali-rolling \(.*\) *|deb [signed-by=/usr/share/keyrings/kali-archive-keyring.gpg] \1kali-rolling \2|g' ${ROOTFS}/etc/apt/sources.list
 
 # 5. Create the Mobian sources list, using the modern 'signed-by' attribute
-echo "deb [signed-by=${KEYRING_PATH}] http://repo.mobian.org/ ${mobian_suite} main non-free-firmware" > ${ROOTFS}/etc/apt/sources.list.d/mobian.list
+echo "deb [signed-by=${MOBIAN_KEYRING_PATH}] http://repo.mobian.org/ ${mobian_suite} main non-free-firmware" > ${ROOTFS}/etc/apt/sources.list.d/mobian.list
 
 # --- END ROBUST APT KEY AND SOURCE SETUP (FINAL FIX) ---
 
@@ -176,7 +178,7 @@ ${BOOTPART}
 EOF
 
 echo '[+]Stage 3: Installing device specific and environment packages'
-# This 'apt update' should now succeed because the Mobian key has been installed cleanly
+# This 'apt update' should now succeed for both Kali and Mobian sources.
 nspawn-exec apt update 
 nspawn-exec apt install -y ${PACKAGES}
 nspawn-exec apt install -y ${DPACKAGES}
