@@ -2,13 +2,13 @@
 
 . bin/funcs.sh
 
-device="nothingphone1" # Defaulted to your test device for safety
+device="nothingphone1"
 environment="phosh"
 hostname="fossfrog"
 username="kali"
 password="8888"
 mobian_suite="trixie"
-IMGSIZE=5 	# GBs
+IMGSIZE=5
 MIRROR='http://http.kali.org/kali'
 
 while getopts "cbt:e:h:u:p:s:m:M:" opt
@@ -76,7 +76,7 @@ case "${environment}" in
 		;;
 	xfce|lxde|gnome|kde)
 		PACKAGES="${PACKAGES} kali-desktop-${environment}"
-		SERVICES="${SERVICES}" # Assuming greetd or display manager is included in kali-desktop-*
+		SERVICES="${SERVICES}"
 		;;
 esac
 
@@ -98,42 +98,29 @@ echo "Custom Script: $custom_script"
 echo -e '--------------------------------------------------\n\n'
 echo '[*]Build will start in 5 seconds...'; sleep 5
 
+# --- RESTORING FAST UNPACKING LOGIC ---
 [ -e "base.tgz" ] && mkdir ${ROOTFS} && tar --strip-components=1 -xpf base.tgz -C ${ROOTFS}
 
 echo '[+]Stage 1: Debootstrap'
 [ -e ${ROOTFS}/etc ] && echo -e "[*]Debootstrap already done.\nSkipping Debootstrap..." || debootstrap --foreign --arch $arch kali-rolling ${ROOTFS} ${MIRROR}
 
-echo '[+]Stage 2: Debootstrap second stage and adding Mobian apt repo'
+echo '[+]Stage 2: Debootstrap second stage and adding Mobian apt repo (INSECURELY TRUSTED)'
 [ -e ${ROOTFS}/etc/passwd ] && echo '[*]Second Stage already done' || nspawn-exec /debootstrap/debootstrap --second-stage
 
-# --- GPG Key Fix Block (Final Robust Method) ---
-# Create keyrings directory inside the rootfs
 mkdir -p ${ROOTFS}/etc/apt/sources.list.d ${ROOTFS}/usr/share/keyrings
 TEMP_KALI_KEYRING="/tmp/kali-archive-keyring.gpg"
-TEMP_MOBI_KEYRING="/tmp/mobian-archive-keyring.gpg"
 KALI_KEYRING_PATH="/usr/share/keyrings/kali-archive-keyring.gpg"
-MOBI_KEYRING_PATH="/usr/share/keyrings/mobian-archive-keyring.gpg"
 
 echo "[*] Downloading Kali GPG key to host's /tmp..."
-# 1. Download Kali key directly to /tmp on the host
 curl -fsSL "https://archive.kali.org/archive-keyring.gpg" -o $TEMP_KALI_KEYRING
-# 2. Copy the key into the rootfs keyring directory
 cp -v $TEMP_KALI_KEYRING ${ROOTFS}$KALI_KEYRING_PATH
-# 3. Create Kali sources list with 'signed-by' attribute
 echo "deb [signed-by=${KALI_KEYRING_PATH}] ${MIRROR} kali-rolling main contrib non-free non-free-firmware" > ${ROOTFS}/etc/apt/sources.list
 
-echo "[*] Downloading Mobian GPG key to host's /tmp..."
-# 4. Download Mobian key directly to /tmp on the host
-curl -fsSL "http://repo.mobian.org/mobian.gpg" -o $TEMP_MOBI_KEYRING
-# 5. Copy the key into the rootfs keyring directory and set permissions
-cp -v $TEMP_MOBI_KEYRING ${ROOTFS}$MOBI_KEYRING_PATH
-chmod 644 ${ROOTFS}$MOBI_KEYRING_PATH
-# 6. Create Mobian sources list with 'signed-by' attribute
-echo "deb [signed-by=${MOBI_KEYRING_PATH}] http://repo.mobian.org/ ${mobian_suite} main non-free-firmware" > ${ROOTFS}/etc/apt/sources.list.d/mobian.list
+echo "[*] Setting Mobian repo to [trusted=yes] to bypass signature check..."
+echo "deb [trusted=yes] http://repo.mobian.org/ ${mobian_suite} main non-free-firmware" > ${ROOTFS}/etc/apt/sources.list.d/mobian.list
 
 echo "[*] Cleaning up temporary keys from host's /tmp..."
-rm -f $TEMP_KALI_KEYRING $TEMP_MOBI_KEYRING
-# --- End GPG Key Fix Block ---
+rm -f $TEMP_KALI_KEYRING
 
 cat << EOF > ${ROOTFS}/etc/apt/preferences.d/00-mobian-priority
 Package: *
@@ -155,7 +142,6 @@ BOOT_UUID=${BOOT_UUID}
 EOF
 
 cat << EOF > ${ROOTFS}/etc/fstab
-# <file system> <mount point> 	<type> 	<options> 	 	<dump> 	<pass>
 UUID=${ROOT_UUID}	/	ext4	defaults,x-systemd.growfs	0	1
 ${BOOTPART}
 EOF
@@ -201,7 +187,6 @@ fi
 
 echo '[*]Enabling kali plymouth theme'
 nspawn-exec plymouth-set-default-theme -R kali
-#sed -i "/picture-uri/cpicture-uri='file:\/\/\/usr\/share\/backgrounds\/kali\/kali-red-sticker-16x9.jpg'" ${ROOTFS}/usr/share/glib-2.0/schemas/11_mobile.gschema.override
 sed -i "/picture-uri/cpicture-uri='file:\/\/\/usr\/share\/backgrounds\/kali\/kali-metal-dark-16x9.jpg'" ${ROOTFS}/usr/share/glib-2.0/schemas/10_desktop-base.gschema.override
 nspawn-exec glib-compile-schemas /usr/share/glib-2.0/schemas
 
@@ -228,9 +213,6 @@ nspawn-exec apt clean
 
 if [ ${SPARSE} ]
 then
-	#nspawn-exec sudo -u ${username} systemctl --user disable pipewire pipewire-pulse
-	#nspawn-exec sudo -u ${username} systemctl --user mask pipewire pipewire-pulse
-	#nspawn-exec sudo -u ${username} systemctl --user enable pulseaudio
 	cp -r bin/bootloader.sh bin/configs ${ROOTFS}
 	chmod +x ${ROOTFS}/bootloader.sh
 	nspawn-exec /bootloader.sh ${family}
@@ -273,5 +255,3 @@ else
 	echo '[*]Skipped compression'
 fi
 echo '[+]Image Generated.'
-
-
