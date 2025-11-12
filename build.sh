@@ -84,7 +84,6 @@ IMG="kali_${environment}_${device}_`date +%Y%m%d`.img"
 ROOTFS_TAR="kali_${environment}_${device}_`date +%Y%m%d`.tgz"
 ROOTFS="kali_rootfs_tmp"
 
-### START BUILDING ###
 banner
 echo '____________________BUILD_INFO____________________'
 echo "Device: $device"
@@ -98,7 +97,6 @@ echo "Custom Script: $custom_script"
 echo -e '--------------------------------------------------\n\n'
 echo '[*]Build will start in 5 seconds...'; sleep 5
 
-# --- RESTORING FAST UNPACKING LOGIC ---
 [ -e "base.tgz" ] && mkdir ${ROOTFS} && tar --strip-components=1 -xpf base.tgz -C ${ROOTFS}
 
 echo '[+]Stage 1: Debootstrap'
@@ -147,6 +145,7 @@ ${BOOTPART}
 EOF
 
 echo '[+]Stage 3: Installing device specific and environment packages'
+# This is where the error occurred before. The [trusted=yes] should resolve it now.
 nspawn-exec apt update
 nspawn-exec apt install -y curl
 nspawn-exec sh -c "$(curl -fsSL https://repo.fossfrog.in/setup.sh)"
