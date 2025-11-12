@@ -1,24 +1,16 @@
 #!/bin/bash -e
 
-# This script builds a Kali image for various mobile devices, integrating 
-# the Mobian repository for mobile-specific packages.
-# This version includes robust, host-side GPG key installation for both 
-# the main Kali archive (to fix debootstrap warnings) and the Mobian 
-# repository (to fix the previous fatal error).
-
 . bin/funcs.sh
 
-# Default Configuration
-device="nothingphone1"
+device="nothingphone1" # Defaulted to your test device for safety
 environment="phosh"
-hostname="nethunter"
+hostname="fossfrog"
 username="kali"
 password="8888"
 mobian_suite="trixie"
 IMGSIZE=5 	# GBs
 MIRROR='http://http.kali.org/kali'
 
-# Parse command line options
 while getopts "cbt:e:h:u:p:s:m:M:" opt
 do
 	case "$opt" in
@@ -35,7 +27,6 @@ do
 	esac
 done
 
-# Device-specific configuration
 case "$device" in
 	"pinephone"|"pinetab"|"sunxi" )
 		arch="arm64"
@@ -71,11 +62,9 @@ case "$device" in
 		;;
 esac
 
-# Common packages
 PACKAGES="${PACKAGES} kali-linux-core wget vim binutils rsync systemd-timesyncd systemd-repart"
 DPACKAGES="${family}-support"
 
-# Environment-specific packages
 case "${environment}" in
 	phosh)
 		PACKAGES="${PACKAGES} phosh-phone phrog portfolio-filemanager"
@@ -115,42 +104,36 @@ echo '[+]Stage 1: Debootstrap'
 [ -e ${ROOTFS}/etc ] && echo -e "[*]Debootstrap already done.\nSkipping Debootstrap..." || debootstrap --foreign --arch $arch kali-rolling ${ROOTFS} ${MIRROR}
 
 echo '[+]Stage 2: Debootstrap second stage and adding Mobian apt repo'
-if [ -e ${ROOTFS}/etc/passwd ]; then
-    echo '[*]Second Stage already done'
-else
-    nspawn-exec /debootstrap/debootstrap --second-stage
-fi
+[ -e ${ROOTFS}/etc/passwd ] && echo '[*]Second Stage already done' || nspawn-exec /debootstrap/debootstrap --second-stage
 
-# --- ROBUST APT KEY AND SOURCE SETUP (FINAL FIX: Host-Side for both Kali & Mobian) ---
+# --- GPG Key Fix Block (Final Robust Method) ---
+# Create keyrings directory inside the rootfs
+mkdir -p ${ROOTFS}/etc/apt/sources.list.d ${ROOTFS}/usr/share/keyrings
+TEMP_KALI_KEYRING="/tmp/kali-archive-keyring.gpg"
+TEMP_MOBI_KEYRING="/tmp/mobian-archive-keyring.gpg"
+KALI_KEYRING_PATH="/usr/share/keyrings/kali-archive-keyring.gpg"
+MOBI_KEYRING_PATH="/usr/share/keyrings/mobian-archive-keyring.gpg"
 
-KEYRING_DIR="${ROOTFS}/usr/share/keyrings"
-KALI_KEYRING_PATH="${KEYRING_DIR}/kali-archive-keyring.gpg"
-MOBIAN_KEYRING_PATH="${KEYRING_DIR}/mobian-archive-keyring.gpg"
+echo "[*] Downloading Kali GPG key to host's /tmp..."
+# 1. Download Kali key directly to /tmp on the host
+curl -fsSL "https://archive.kali.org/archive-keyring.gpg" -o $TEMP_KALI_KEYRING
+# 2. Copy the key into the rootfs keyring directory
+cp -v $TEMP_KALI_KEYRING ${ROOTFS}$KALI_KEYRING_PATH
+# 3. Create Kali sources list with 'signed-by' attribute
+echo "deb [signed-by=${KALI_KEYRING_PATH}] ${MIRROR} kali-rolling main contrib non-free non-free-firmware" > ${ROOTFS}/etc/apt/sources.list
 
-# 1. Create the necessary directories on the host
-mkdir -p ${ROOTFS}/etc/apt/sources.list.d ${KEYRING_DIR}
+echo "[*] Downloading Mobian GPG key to host's /tmp..."
+# 4. Download Mobian key directly to /tmp on the host
+curl -fsSL "http://repo.mobian.org/mobian.gpg" -o $TEMP_MOBI_KEYRING
+# 5. Copy the key into the rootfs keyring directory and set permissions
+cp -v $TEMP_MOBI_KEYRING ${ROOTFS}$MOBI_KEYRING_PATH
+chmod 644 ${ROOTFS}$MOBI_KEYRING_PATH
+# 6. Create Mobian sources list with 'signed-by' attribute
+echo "deb [signed-by=${MOBI_KEYRING_PATH}] http://repo.mobian.org/ ${mobian_suite} main non-free-firmware" > ${ROOTFS}/etc/apt/sources.list.d/mobian.list
 
-# 2. Install KALI Key (Fixes the debootstrap WARNING)
-echo "[*] Installing Kali GPG key from host system to ${KALI_KEYRING_PATH}..."
-# Use curl/gpg on the host and tee the output to guarantee correct format and permissions.
-curl -fsSL https://archive.kali.org/archive-keyring.gpg | gpg --dearmor | tee ${KALI_KEYRING_PATH} > /dev/null
-chmod 644 ${KALI_KEYRING_PATH}
-
-# 3. Install MOBIAN Key (Fixes the previous FATAL ERROR)
-echo "[*] Installing Mobian GPG key from host system to ${MOBIAN_KEYRING_PATH}..."
-curl -fsSL http://repo.mobian.org/mobian.gpg | gpg --dearmor | tee ${MOBIAN_KEYRING_PATH} > /dev/null
-chmod 644 ${MOBIAN_KEYRING_PATH}
-
-# 4. Update the main Kali sources line to include contrib/non-free and the signed-by directive
-# This ensures the first source line is correctly formatted for modern APT
-sed -i 's/main/main contrib non-free non-free-firmware/g' ${ROOTFS}/etc/apt/sources.list
-sed -i 's|^deb \(.*\)kali-rolling \(.*\) *|deb [signed-by=/usr/share/keyrings/kali-archive-keyring.gpg] \1kali-rolling \2|g' ${ROOTFS}/etc/apt/sources.list
-
-# 5. Create the Mobian sources list, using the modern 'signed-by' attribute
-echo "deb [signed-by=${MOBIAN_KEYRING_PATH}] http://repo.mobian.org/ ${mobian_suite} main non-free-firmware" > ${ROOTFS}/etc/apt/sources.list.d/mobian.list
-
-# --- END ROBUST APT KEY AND SOURCE SETUP (FINAL FIX) ---
-
+echo "[*] Cleaning up temporary keys from host's /tmp..."
+rm -f $TEMP_KALI_KEYRING $TEMP_MOBI_KEYRING
+# --- End GPG Key Fix Block ---
 
 cat << EOF > ${ROOTFS}/etc/apt/preferences.d/00-mobian-priority
 Package: *
@@ -178,8 +161,9 @@ ${BOOTPART}
 EOF
 
 echo '[+]Stage 3: Installing device specific and environment packages'
-# This 'apt update' should now succeed for both Kali and Mobian sources.
-nspawn-exec apt update 
+nspawn-exec apt update
+nspawn-exec apt install -y curl
+nspawn-exec sh -c "$(curl -fsSL https://repo.fossfrog.in/setup.sh)"
 nspawn-exec apt install -y ${PACKAGES}
 nspawn-exec apt install -y ${DPACKAGES}
 
@@ -219,7 +203,7 @@ echo '[*]Enabling kali plymouth theme'
 nspawn-exec plymouth-set-default-theme -R kali
 #sed -i "/picture-uri/cpicture-uri='file:\/\/\/usr\/share\/backgrounds\/kali\/kali-red-sticker-16x9.jpg'" ${ROOTFS}/usr/share/glib-2.0/schemas/11_mobile.gschema.override
 sed -i "/picture-uri/cpicture-uri='file:\/\/\/usr\/share\/backgrounds\/kali\/kali-metal-dark-16x9.jpg'" ${ROOTFS}/usr/share/glib-2.0/schemas/10_desktop-base.gschema.override
-nspawn-exec glib-compile-schemas /usr/share/glib-20/schemas
+nspawn-exec glib-compile-schemas /usr/share/glib-2.0/schemas
 
 echo '[+]Stage 6: Enable services'
 for svc in `echo ${SERVICES} | tr ' ' '\n'`
