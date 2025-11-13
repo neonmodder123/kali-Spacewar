@@ -1,0 +1,46 @@
+name: Build Normal Image
+
+on:
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Set up QEMU
+        uses: docker/setup-qemu-action@v3
+        with:
+          platforms: all
+          
+      - name: Install Dependencies and Mobian GPG Key
+        run: |
+          sudo apt update
+          sudo apt install -y android-sdk-libsparse-utils bmap-tools debootstrap qemu-user-static rsync systemd-container gnupg dirmngr
+
+          gpg --keyserver hkps://keyserver.ubuntu.com --recv-keys 951D61F2BC232697 || { echo "Failed to fetch key from keyserver..."; }
+          gpg --export 951D61F2BC232697 | sudo gpg --dearmor -o /etc/apt/trusted.gpg.d/mobian-archive-keyring.gpg
+          
+          sudo apt update
+
+      - name: Restore or Cache Nethunter Base Image
+        id: cache-base
+        uses: actions/cache@v4
+        with:
+          path: base.tgz
+          key: ${{ runner.os }}-nethunter-base-${{ hashFiles('build_dualboot.sh') }}
+          restore-keys: |
+            ${{ runner.os }}-nethunter-base-
+
+      - name: Build!
+        run: |
+          sudo ./build_dualboot.sh -t nothingphone1
+
+      - name: ⬆️ Upload Nethunter Image Artifact
+        uses: actions/upload-artifact@v4
+        with:
+          path: |
+            kali_phosh_nothingphone1_*.img
+            boot_spacewar_*.img
+          name: 'nothingphone1-nethunter-image'
+          retention-days: 7
