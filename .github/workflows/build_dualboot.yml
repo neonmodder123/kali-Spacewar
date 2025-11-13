@@ -28,9 +28,9 @@ jobs:
         uses: actions/cache@v4
         with:
           path: base.tgz
-          key: ${{ runner.os }}-nethunter-base-${{ hashFiles('build_dualboot.sh') }}
+          key: ${{ runner.os }}-nethunter-base-dualboot-${{ hashFiles('build_dualboot.sh') }}
           restore-keys: |
-            ${{ runner.os }}-nethunter-base-
+            ${{ runner.os }}-nethunter-base-dualboot-
 
       - name: Build!
         run: |
