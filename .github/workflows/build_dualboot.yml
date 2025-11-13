@@ -1,4 +1,4 @@
-name: Build Normal Image
+name: Build Dualboot Image (test)
 
 on:
   workflow_dispatch:
