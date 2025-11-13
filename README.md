@@ -1,4 +1,4 @@
-# Kali Phosh Builder for Nothing Phone (1) Spacewar
+# Kali Phosh Builds for Nothing Phone (1) Spacewar
 
 ```
 -----------------------------------------
@@ -8,21 +8,22 @@
 |_|___|___|_| |__|__|___|_|_|_| |___|_|
  _____
 |  _  |___ ___
-|   __|  _| . | Image Generator
-|__|  |_| |___| by Shubham Vishwakarma
+|   __|  _| . | Updated builds by me :)
+|__|  |_| |___| build.sh by Shubham Vishwakarma
 
 twitter/git: shubhamvis98
 -----------------------------------------
 ```
+This repo has normal and dualboot (test) updated builds for the Nothing Phone 1, and a GitHub Workflow to build these images. I will not be building for other devices as I do not have them.
 
-A huge thanks to Mobian Project and Megi's Kernel Patches.
+A huge thanks to Mobian Project, Megi's Kernel Patches and Shubham Vishwakarma (Shubhamvis98).
 
 ## Build Instruction:
 Automatic Build:
 
 Just fork this repository and run the Build Image action.
 
-Manual Build:
+### Manual Build:
 
 Normal Build with default username and password:
 ```
