@@ -142,7 +142,7 @@ BOOT_UUID=${BOOT_UUID}
 EOF
 
 cat << EOF > ${ROOTFS}/etc/fstab
-/dev/disk/by-partname/linux	/	ext4	defaults,x-systemd.growfs	0	1
+/dev/disk/by-partname/kali	/	ext4	defaults,x-systemd.growfs	0	1
 ${BOOTPART}
 EOF
 # --- For Dualboot ---
@@ -250,8 +250,9 @@ fi
 
 if [ "$SPARSE" ]
 then
-	img2simg ${IMG} ${IMG}_SPARSE
-	mv -v ${IMG}_SPARSE ${IMG}
+	# img2simg ${IMG} ${IMG}_SPARSE
+	# mv -v ${IMG}_SPARSE ${IMG}
+	echo '[*] Skipped Sparse Image for raw image file. (for dualbooting)'
 fi
 
 if [ "$compress" ]
