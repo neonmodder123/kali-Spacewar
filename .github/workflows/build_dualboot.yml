@@ -34,6 +34,9 @@ jobs:
 
       - name: Build!
         run: |
+          sudo ls -l
+          ls -l
+          chmod +x build_dualboot.sh
           sudo ./build_dualboot.sh -t nothingphone1
 
       - name: ⬆️ Upload Nethunter Image Artifact
