@@ -18,6 +18,9 @@ This repo has normal and dualboot (test) updated builds for the Nothing Phone 1,
 
 A huge thanks to Mobian Project, Megi's Kernel Patches and Shubham Vishwakarma (Shubhamvis98).
 
+# STATUS:
+## There is a segmentation fault while booting and since I do not have access to a linux computer at the moment and have a lot of work, I cannot build anymore. I might try later on, but I cannot guarentee that.
+
 ## Build Instruction:
 Automatic Build:
 
