@@ -57,9 +57,14 @@ mkimg() {
     if [ $PARTS -eq 1 ]
     then
         losetup ${LOOP} ${IMG}
-        mkfs.ext4 -L ROOT -U ${ROOT_UUID} ${LOOP}
+        
+        # --- Fix for dualboot
+        mkfs.ext4 -L kali ${LOOP} 
+        # --- Fix for dualboot
+        
         mkdir -pv ${ROOTFS}
         mount -v ${LOOP} ${ROOTFS}
+
     else
         echo '[*]Partitioning Image: 512MB BOOT and rest ROOTFS...'
         sleep 1
